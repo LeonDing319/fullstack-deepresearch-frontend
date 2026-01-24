@@ -262,7 +262,7 @@ const ModelComparison = () => {
         } else {
           setError('Invalid key file format')
         }
-      } catch (err) {
+      } catch {
         setError('Failed to parse key file')
       }
     }
