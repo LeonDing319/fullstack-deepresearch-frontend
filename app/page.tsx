@@ -36,9 +36,9 @@ function SidebarConfig() {
           className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           disabled={isStreaming}
         >
-          <option value="anthropic">Claude 4 (Latest)</option>
-          <option value="openai">GPT-5 (Latest)</option>
-          <option value="kimi">Kimi K2 0905 Preview</option>
+          <option value="anthropic">Claude Opus 4.5 (SOTA)</option>
+          <option value="openai">GPT-5.2 (SOTA)</option>
+          <option value="kimi">Kimi K2 Thinking (SOTA)</option>
         </select>
       </div>
 
