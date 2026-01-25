@@ -33,9 +33,9 @@ export interface ResearchMessage {
 }
 
 interface ApiKeys {
-  openai: string
-  anthropic: string
-  kimi: string
+  zhipu: string     // 智谱 GLM API Key
+  deepseek: string  // DeepSeek API Key
+  kimi: string      // Kimi API Key
 }
 
 interface ResearchState {
@@ -75,7 +75,7 @@ export const ResearchProvider = ({ children }: { children: ReactNode }) => {
   const [streamingEvents, setStreamingEvents] = useState<StreamingEvent[]>([])
   const [currentStage, setCurrentStage] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('anthropic')
+  const [selectedModel, setSelectedModel] = useState('zhipu')
   const [apiKey, setApiKey] = useState('')
   
   // Initialize API keys from localStorage
@@ -90,7 +90,7 @@ export const ResearchProvider = ({ children }: { children: ReactNode }) => {
         console.warn('Failed to load API keys from localStorage:', error)
       }
     }
-    return { openai: '', anthropic: '', kimi: '' }
+    return { zhipu: '', deepseek: '', kimi: '' }
   })
 
   // API key management functions
@@ -114,7 +114,7 @@ export const ResearchProvider = ({ children }: { children: ReactNode }) => {
   }
   
   const clearApiKeys = () => {
-    const emptyKeys = { openai: '', anthropic: '', kimi: '' }
+    const emptyKeys = { zhipu: '', deepseek: '', kimi: '' }
     setApiKeysState(emptyKeys)
     setApiKey('')
     
