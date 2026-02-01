@@ -278,7 +278,7 @@ const ModelComparison = () => {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="w-6 h-6 animate-spin text-zinc-900 dark:text-zinc-300" />
-        <span className="ml-3 text-gray-600 dark:text-gray-400">Loading...</span>
+        <span className="ml-3 text-gray-600 dark:text-gray-400">{t.loading}</span>
       </div>
     )
   }
@@ -336,7 +336,7 @@ const ModelComparison = () => {
               className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-50 flex items-center gap-1"
             >
               <Settings className="w-4 h-4" />
-              {showKeyManager ? 'Hide' : t.configure}
+              {showKeyManager ? t.hide : t.configure}
             </button>
           </div>
         </div>
@@ -604,7 +604,7 @@ const ModelComparison = () => {
                     <div className="flex items-center gap-1">
                       <FileText className="w-3 h-3 text-zinc-800" />
                       <span className="text-gray-600 dark:text-gray-300">
-                        {result.word_count} words
+                        {result.word_count} {t.words}
                       </span>
                     </div>
                   </div>

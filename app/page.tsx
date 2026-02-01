@@ -127,7 +127,7 @@ function MainContent() {
 
         {/* Navigation Tabs */}
         {!sidebarCollapsed && (
-          <div className="p-4">
+          <div className="px-4 pt-0 pb-4">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-1 gap-1 bg-gray-100 dark:bg-neutral-800 p-1 rounded-lg">
                 <TabsTrigger
@@ -158,7 +158,7 @@ function MainContent() {
 
         {/* Configuration Inputs */}
         {!sidebarCollapsed && activeTab === 'research' && (
-          <div className="flex-1 p-4">
+          <div className="flex-1 px-4 pt-0 pb-4">
             <SidebarConfig />
           </div>
         )}

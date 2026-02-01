@@ -16,6 +16,8 @@ interface Translations {
   backendConnected: string
 
   // Research Interface
+  startResearch: string
+  startResearchDesc: string
   askQuestion: string
   researching: string
   stop: string
@@ -33,6 +35,19 @@ interface Translations {
   copyDocs: string
   researchCompleted: string
   showFinalReport: string
+  researchSession: string
+  startingResearch: string
+  researchProgress: string
+  hide: string
+  words: string
+  loading: string
+  noThinkingSteps: string
+  stepsWillAppear: string
+  noSourcesAvailable: string
+  sourcesWillAppear: string
+  processing: string
+  viewMetadata: string
+  workingOn: string
 
   // Compare
   modelComparison: string
@@ -93,6 +108,8 @@ const translations: Record<Language, Translations> = {
     apiKeyPlaceholder: '输入你的 API 密钥...',
     backendConnected: '后端已连接',
 
+    startResearch: '开始你的研究',
+    startResearchDesc: '提出问题，开始全面的AI驱动研究',
     askQuestion: '输入研究问题...',
     researching: '研究中...',
     stop: '停止',
@@ -110,6 +127,19 @@ const translations: Record<Language, Translations> = {
     copyDocs: '复制',
     researchCompleted: '✨ 研究完成！最终报告已准备好。',
     showFinalReport: '📄 显示最终报告',
+    researchSession: '研究会话',
+    startingResearch: '开始研究流程...',
+    researchProgress: '研究进度',
+    hide: '隐藏',
+    words: '字',
+    loading: '加载中...',
+    noThinkingSteps: '暂无思考步骤',
+    stepsWillAppear: '步骤将在AI处理研究时显示',
+    noSourcesAvailable: '暂无可用来源',
+    sourcesWillAppear: '来源将随着研究进展显示',
+    processing: '处理中',
+    viewMetadata: '查看元数据',
+    workingOn: '正在工作',
 
     modelComparison: '模型性能对比',
     compareDescription: '对比不同 AI 模型的性能指标。对同一问题运行多个模型，查看详细的时间、质量和性能差异。',
@@ -165,6 +195,8 @@ const translations: Record<Language, Translations> = {
     apiKeyPlaceholder: 'Enter your API key...',
     backendConnected: 'Backend Connected',
 
+    startResearch: 'Start Your Research',
+    startResearchDesc: 'Ask a question to begin comprehensive AI-powered research',
     askQuestion: 'Ask a research question...',
     researching: 'Researching...',
     stop: 'Stop',
@@ -182,6 +214,19 @@ const translations: Record<Language, Translations> = {
     copyDocs: 'Copy',
     researchCompleted: '✨ Research completed! Final report is ready.',
     showFinalReport: '📄 Show Final Report',
+    researchSession: 'Research Session',
+    startingResearch: 'Starting research process...',
+    researchProgress: 'Research Progress',
+    hide: 'Hide',
+    words: 'words',
+    loading: 'Loading...',
+    noThinkingSteps: 'No thinking steps yet',
+    stepsWillAppear: 'Steps will appear here as AI processes your research',
+    noSourcesAvailable: 'No sources available yet',
+    sourcesWillAppear: 'Sources will appear as research progresses',
+    processing: 'Processing',
+    viewMetadata: 'View metadata',
+    workingOn: 'Working',
 
     modelComparison: 'Model Performance Comparison',
     compareDescription: 'Compare AI model performance across different metrics. Run the same query on multiple models to see detailed timing, quality, and performance differences.',
