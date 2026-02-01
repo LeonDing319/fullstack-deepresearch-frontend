@@ -6,7 +6,13 @@ import Image from 'next/image'
 import { Send, AlertCircle, Download, ExternalLink, Brain, Menu, X, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useResearchState } from '@/contexts/ResearchContext'
+import { useLanguage } from '@/contexts/LanguageContext'
 import { createGoogleDoc } from '@/lib/googleDocs'
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import remarkGfm from 'remark-gfm'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
 
 // Types for messages and streaming events
 interface Message {
@@ -32,7 +38,8 @@ type ResearchTab = 'thinking' | 'sources'
 
 export default function ResearchInterface() {
   const { selectedModel, apiKey, isStreaming, setIsStreaming } = useResearchState()
-  
+  const { t } = useLanguage()
+
   // Backend URL configuration
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080'
   
@@ -51,6 +58,9 @@ export default function ResearchInterface() {
   const [currentQuery, setCurrentQuery] = useState<string>('')
   const [researchBrief, setResearchBrief] = useState<string>('')
   const [streamingContent, setStreamingContent] = useState<string>('')
+
+  // State to track new query submission - prevents race conditions with sessionStorage
+  const [isNewQuery, setIsNewQuery] = useState(false)
   
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -68,23 +78,37 @@ export default function ResearchInterface() {
         if (parsed.finalReportContent) setFinalReportContent(parsed.finalReportContent)
         if (parsed.researchSources) setResearchSources(parsed.researchSources)
         if (parsed.activeTab) setActiveTab(parsed.activeTab)
+        if (parsed.currentQuery) setCurrentQuery(parsed.currentQuery)
+        if (parsed.streamingContent) setStreamingContent(parsed.streamingContent)
       }
     } catch {}
   }, [])
 
   useEffect(() => {
-    try {
-      const payload = {
-        messages,
-        streamingEvents,
-        apiCallLogs,
-        finalReportContent,
-        researchSources,
-        activeTab,
-      }
-      sessionStorage.setItem('dra_session_v1', JSON.stringify(payload))
-    } catch {}
-  }, [messages, streamingEvents, apiCallLogs, finalReportContent, researchSources, activeTab])
+    // Don't save to sessionStorage during new query transition to prevent race conditions
+    if (isNewQuery) {
+      return
+    }
+
+    // Debounce sessionStorage writes to avoid rapid updates during query transitions
+    const timeoutId = setTimeout(() => {
+      try {
+        const payload = {
+          messages,
+          streamingEvents,
+          apiCallLogs,
+          finalReportContent,
+          researchSources,
+          activeTab,
+          currentQuery,
+          streamingContent,
+        }
+        sessionStorage.setItem('dra_session_v1', JSON.stringify(payload))
+      } catch {}
+    }, 500)
+
+    return () => clearTimeout(timeoutId)
+  }, [messages, streamingEvents, apiCallLogs, finalReportContent, researchSources, activeTab, currentQuery, streamingContent, isNewQuery])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -93,6 +117,9 @@ export default function ResearchInterface() {
 
   // Auto-fix: Force display final report if research is complete but fallback message is showing
   useEffect(() => {
+    // Only run auto-fix if we have a valid current query (prevents using stale data)
+    if (!currentQuery || isStreaming) return
+    
     if (currentStage === 'completed' && 
         finalReportContent && 
         streamingContent.includes('check the Thinking Steps tab')) {
@@ -101,19 +128,21 @@ export default function ResearchInterface() {
     }
     
     // Additional auto-fix: If we have thinking steps with final report but main chat shows "Starting research"
-    if (!isStreaming && streamingEvents.length > 0 && streamingContent.includes('Starting deep research')) {
+    // Only trigger if we're NOT currently streaming and have substantial events
+    if (!isStreaming && streamingEvents.length > 3 && streamingContent.includes('Starting deep research')) {
       const finalReportEvent = streamingEvents.find(e => 
         e.stage === 'Final_report' || 
-        (e.content && e.content.includes('# Top 5') && e.content.length > 1000)
+        e.stage === 'final_report_generation' ||
+        (e.stage && e.stage.toLowerCase().includes('final'))
       )
-      if (finalReportEvent && finalReportEvent.content) {
+      if (finalReportEvent && finalReportEvent.content && finalReportEvent.content.length > 500) {
         console.log('Auto-fix: Found final report in thinking steps, displaying in main chat')
         setFinalReportContent(finalReportEvent.content)
         setStreamingContent(finalReportEvent.content)
         setCurrentStage('completed')
       }
     }
-  }, [currentStage, finalReportContent, streamingContent, isStreaming, streamingEvents])
+  }, [currentStage, finalReportContent, streamingContent, isStreaming, streamingEvents, currentQuery])
 
   // Extract sources from content
   const extractSourcesFromContent = (content: string): string[] => {
@@ -191,6 +220,10 @@ export default function ResearchInterface() {
     e.preventDefault()
     if (!input.trim() || !apiKey.trim() || isStreaming) return
 
+    console.log('=== NEW QUERY SUBMITTED ===')
+    console.log('New query:', input.trim())
+    console.log('Clearing previous research data...')
+
     // Store current research in chat history if it exists
     if (currentQuery && (streamingContent || finalReportContent)) {
       const completedResearch: Message = {
@@ -210,9 +243,19 @@ export default function ResearchInterface() {
 
     // Store the query before setting up new research
     const queryToSend = input.trim()
-    
-    // Set up new research
-    setCurrentQuery(queryToSend)
+
+    // CRITICAL: Set new query flag FIRST to prevent sessionStorage race conditions
+    setIsNewQuery(true)
+
+    // CRITICAL: Completely remove sessionStorage to prevent old data from being restored
+    try {
+      sessionStorage.removeItem('dra_session_v1')
+      console.log('SessionStorage completely removed for new query')
+    } catch (error) {
+      console.error('Failed to remove sessionStorage:', error)
+    }
+
+    // Set up new research - Clear all states
     setInput('')
     setIsStreaming(true)
     setStreamingEvents([])
@@ -223,6 +266,9 @@ export default function ResearchInterface() {
     setResearchBrief('')
     setResearchSources([])
     setActiveTab('thinking')
+
+    // Set currentQuery AFTER clearing other states
+    setCurrentQuery(queryToSend)
 
     // Create abort controller for this request
     abortControllerRef.current = new AbortController()
@@ -253,6 +299,8 @@ export default function ResearchInterface() {
       }
 
       let buffer = ''
+      let isFirstEvent = true
+      console.log('Starting to receive streaming data for query:', queryToSend)
 
       while (true) {
         const { done, value } = await reader.read()
@@ -266,6 +314,14 @@ export default function ResearchInterface() {
           if (line.startsWith('data: ')) {
             try {
               const eventData = JSON.parse(line.slice(6)) as StreamingEvent
+              console.log('Received event:', eventData.type, eventData.stage)
+
+              // Clear the isNewQuery flag on first event to allow sessionStorage persistence
+              if (isFirstEvent) {
+                isFirstEvent = false
+                setIsNewQuery(false)
+                console.log('First event received, isNewQuery flag cleared')
+              }
               
               // Handle different event types
               if (eventData.type === 'stage_start' || eventData.type === 'stage_update') {
@@ -350,23 +406,24 @@ export default function ResearchInterface() {
                 // Handle completion events - show final report in main chat like Perplexity
                 setIsStreaming(false)
                 setCurrentStage('completed')
-                setStreamingEvents(prev => [...prev, eventData])
-                
-                // SIMPLE AND DIRECT: Just find the damn final report and show it
-                const showFinalReport = () => {
-                  console.log('=== FINAL REPORT SEARCH START ===')
-                  console.log('Current finalReportContent:', finalReportContent?.substring(0, 100))
+
+                // Use setState callback pattern to avoid closure issues with stale state
+                // This ensures we have access to the latest events when searching for the report
+                setStreamingEvents(prevEvents => {
+                  const allEvents = [...prevEvents, eventData]
+                  console.log('=== FINAL REPORT SEARCH START (closure-safe) ===')
                   console.log('EventData content:', eventData.content?.substring(0, 100))
-                  
-                  // Get ALL events including the current one
-                  const allEvents = [...streamingEvents, eventData]
                   console.log('Total events to search:', allEvents.length)
-                  
-                  // Find ANY event with substantial content - be very liberal
-                  let reportContent = finalReportContent
-                  
-                  if (!reportContent) {
-                    // Look for final report stages (multiple variations)
+
+                  // Helper function to find the report content
+                  const findReportContent = (): string | null => {
+                    // Priority 1: Check current event's content (if it's the completion with content)
+                    if (eventData.content && eventData.content.length > 100) {
+                      console.log('Found via eventData content directly')
+                      return eventData.content
+                    }
+
+                    // Priority 2: Look for final report stages
                     const finalReportEvent = allEvents.find(e => e.content && (
                       e.stage === 'final_report_generation' ||
                       e.stage === 'Final_report' ||
@@ -374,15 +431,13 @@ export default function ResearchInterface() {
                       e.stage?.toLowerCase().includes('report')
                     ))
                     if (finalReportEvent) {
-                      reportContent = finalReportEvent.content
-                      console.log('Found via final report stage:', finalReportEvent.stage, reportContent.substring(0, 100))
+                      console.log('Found via final report stage:', finalReportEvent.stage)
+                      return finalReportEvent.content
                     }
-                  }
-                  
-                  if (!reportContent) {
-                    // Look for any event with report-like patterns
+
+                    // Priority 3: Look for any event with report-like patterns
                     const titleEvent = allEvents.find(e => e.content && (
-                      e.content.includes('# Top') || 
+                      e.content.includes('# Top') ||
                       e.content.includes('## AI') ||
                       e.content.includes('**Tweet:**') ||
                       e.content.includes('## Introduction') ||
@@ -391,55 +446,56 @@ export default function ResearchInterface() {
                       (e.content.includes('startup') && e.content.includes('#'))
                     ))
                     if (titleEvent) {
-                      reportContent = titleEvent.content
-                      console.log('Found via title patterns:', reportContent.substring(0, 100))
+                      console.log('Found via title patterns')
+                      return titleEvent.content
                     }
-                  }
-                  
-                  if (!reportContent) {
-                    // Look for ANY long content that might be the report
+
+                    // Priority 4: Look for ANY long content that might be the report
                     const longEvent = allEvents.find(e => e.content && e.content.length > 1000)
                     if (longEvent) {
-                      reportContent = longEvent.content
-                      console.log('Found via length heuristic:', reportContent.substring(0, 100))
+                      console.log('Found via length heuristic')
+                      return longEvent.content
                     }
-                  }
-                  
-                  if (!reportContent) {
-                    // Last resort: look for ANY content with relevant keywords
+
+                    // Priority 5: Last resort - ANY content with relevant keywords
                     const relevantEvent = allEvents.find(e => e.content && e.content.length > 200 && (
-                      e.content.includes('startup') || 
-                      e.content.includes('AI') || 
+                      e.content.includes('startup') ||
+                      e.content.includes('AI') ||
                       e.content.includes('B2C') ||
                       e.content.includes('#')
                     ))
                     if (relevantEvent) {
-                      reportContent = relevantEvent.content
-                      console.log('Found via keyword search:', reportContent.substring(0, 100))
+                      console.log('Found via keyword search')
+                      return relevantEvent.content
                     }
+
+                    return null
                   }
-                  
-                  console.log('=== FINAL DECISION ===')
-                  if (reportContent) {
-                    console.log('✅ SHOWING FINAL REPORT:', reportContent.substring(0, 200))
-                    setFinalReportContent(reportContent)
-                    setStreamingContent(reportContent)
-                  } else {
-                    console.log('❌ NO REPORT FOUND - Event details:')
-                    allEvents.forEach((e, i) => {
-                      console.log(`Event ${i}:`, {
-                        type: e.type,
-                        stage: e.stage,
-                        contentLength: e.content?.length,
-                        contentPreview: e.content?.substring(0, 50)
+
+                  const reportContent = findReportContent()
+
+                  // Use setTimeout to avoid setState-within-setState issues
+                  setTimeout(() => {
+                    if (reportContent) {
+                      console.log('✅ SHOWING FINAL REPORT:', reportContent.substring(0, 200))
+                      setFinalReportContent(reportContent)
+                      setStreamingContent(reportContent)
+                    } else {
+                      console.log('❌ NO REPORT FOUND - falling back to message')
+                      allEvents.forEach((e, i) => {
+                        console.log(`Event ${i}:`, {
+                          type: e.type,
+                          stage: e.stage,
+                          contentLength: e.content?.length,
+                          contentPreview: e.content?.substring(0, 50)
+                        })
                       })
-                    })
-                    setStreamingContent('## ✅ Research Complete\n\nResearch has been completed successfully. The detailed report is available in the **Thinking Steps** tab on the right.\n\n*If you don\'t see the final report here, please check the Thinking Steps tab for the complete analysis.*')
-                  }
-                }
-                
-                // Show immediately
-                showFinalReport()
+                      setStreamingContent('## ✅ Research Complete\n\nResearch has been completed successfully. The detailed report is available in the **Thinking Steps** tab on the right.\n\n*If you don\'t see the final report here, please check the Thinking Steps tab for the complete analysis.*')
+                    }
+                  }, 0)
+
+                  return allEvents
+                })
               } else if (eventData.type === 'api_call') {
                 const logEntry = `[${new Date(eventData.timestamp).toLocaleTimeString()}] 🔗 ${eventData.content}`
                 setApiCallLogs(prev => [...prev, logEntry])
@@ -669,16 +725,23 @@ Generated by Deep Research Agent v2`
 
   // Render main research content (Perplexity-style)
   const renderResearchContent = () => {
+    // Debug logging
+    if (currentQuery) {
+      console.log('Rendering research for query:', currentQuery)
+      console.log('streamingContent length:', streamingContent?.length || 0)
+      console.log('finalReportContent length:', finalReportContent?.length || 0)
+    }
+    
     if (!currentQuery) {
       return (
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="text-center">
             <div className="text-4xl mb-4">🔍</div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-              Start Your Research
+              {t.startResearch}
             </h2>
             <p className="text-gray-600 dark:text-gray-400">
-              Ask a question to begin comprehensive AI-powered research
+              {t.startResearchDesc}
             </p>
           </div>
         </div>
@@ -728,7 +791,7 @@ Generated by Deep Research Agent v2`
           {isStreaming && (
             <div className="flex items-center space-x-2 text-sm text-zinc-900 dark:text-zinc-300">
               <div className="w-2 h-2 bg-zinc-800 rounded-full animate-pulse"></div>
-              <span>Researching...</span>
+              <span>{t.researching}</span>
             </div>
           )}
         </div>
@@ -749,7 +812,7 @@ Generated by Deep Research Agent v2`
           return shouldShowButton ? (
             <div className="mb-4 p-3 bg-zinc-50 dark:bg-zinc-900/20 rounded-lg border border-zinc-300 dark:border-zinc-800">
               <p className="text-sm text-zinc-800 dark:text-zinc-300 mb-2">
-                ✨ Research completed! Final report is ready to display.
+                {t.researchCompleted}
               </p>
               <button 
                 onClick={() => {
@@ -762,7 +825,7 @@ Generated by Deep Research Agent v2`
                 }}
                 className="px-4 py-2 bg-zinc-900 hover:bg-zinc-700 text-white rounded-md text-sm font-medium transition-colors"
               >
-                📄 Show Final Report
+                {t.showFinalReport}
               </button>
             </div>
           ) : null
@@ -781,7 +844,7 @@ Generated by Deep Research Agent v2`
               }}
               className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm"
             >
-              Show Final Report
+              {t.showFinalReport}
             </button>
           </div>
         )}
@@ -795,36 +858,25 @@ Generated by Deep Research Agent v2`
                 lineHeight: '1.7',
                 fontSize: '16px'
               }}
-              dangerouslySetInnerHTML={{
-                __html: (finalReportContent || streamingContent)
-                  // Convert markdown to HTML for better rendering
-                  .replace(/^### (.*$)/gm, '<h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3 mt-6">$1</h3>')
-                  .replace(/^## (.*$)/gm, '<h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-4 mt-8">$1</h2>')
-                  .replace(/^# (.*$)/gm, '<h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-6 mt-8">$1</h1>')
-                  .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900 dark:text-white">$1</strong>')
-                  .replace(/\*(.*?)\*/g, '<em class="italic">$1</em>')
-                  .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-zinc-900 hover:text-zinc-800 dark:text-zinc-300 dark:hover:text-zinc-400 underline transition-colors">$1</a>')
-                  .replace(/(?<!\]\()https?:\/\/[^\s<>"{}|\\^`[\]]+/g, '<a href="$&" target="_blank" rel="noopener noreferrer" class="text-zinc-900 hover:text-zinc-800 dark:text-zinc-300 dark:hover:text-zinc-400 underline transition-colors break-all">$&</a>')
-                  // Handle lists
-                  .replace(/^\- (.*$)/gm, '<li class="ml-4 mb-2">$1</li>')
-                  .replace(/^(\d+)\. (.*$)/gm, '<li class="ml-4 mb-2">$2</li>')
-                  // Handle paragraphs
-                  .split('\n\n')
-                  .map(para => {
-                    if (para.includes('<h1') || para.includes('<h2') || para.includes('<h3')) {
-                      return para
-                    } else if (para.includes('<li')) {
-                      return `<ul class="list-disc ml-6 mb-4 space-y-1">${para}</ul>`
-                    } else if (para.trim()) {
-                      return `<p class="mb-4 text-gray-700 dark:text-gray-300">${para}</p>`
-                    }
-                    return ''
-                  })
-                  .join('')
-                  // Clean up empty elements
-                  .replace(/<p class="mb-4 text-gray-700 dark:text-gray-300"><\/p>/g, '')
-              }}
-            />
+            >
+              <ReactMarkdown
+                remarkPlugins={[remarkMath, remarkGfm]}
+                rehypePlugins={[rehypeKatex]}
+                components={{
+                  h1: ({node, ...props}) => <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6 mt-8" {...props} />,
+                  h2: ({node, ...props}) => <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 mt-8" {...props} />,
+                  h3: ({node, ...props}) => <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 mt-6" {...props} />,
+                  p: ({node, ...props}) => <p className="mb-4 text-gray-700 dark:text-gray-300" {...props} />,
+                  a: ({node, ...props}) => <a className="text-zinc-900 hover:text-zinc-800 dark:text-zinc-300 dark:hover:text-zinc-400 underline transition-colors" target="_blank" rel="noopener noreferrer" {...props} />,
+                  strong: ({node, ...props}) => <strong className="font-semibold text-gray-900 dark:text-white" {...props} />,
+                  ul: ({node, ...props}) => <ul className="list-disc ml-6 mb-4 space-y-1" {...props} />,
+                  ol: ({node, ...props}) => <ol className="list-decimal ml-6 mb-4 space-y-1" {...props} />,
+                  li: ({node, ...props}) => <li className="ml-4 mb-2" {...props} />,
+                }}
+              >
+                {finalReportContent || streamingContent}
+              </ReactMarkdown>
+            </div>
           ) : isStreaming ? (
             <div className="space-y-4">
               <div className="animate-pulse">
@@ -833,12 +885,12 @@ Generated by Deep Research Agent v2`
                 <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-5/6"></div>
               </div>
               <p className="text-gray-600 dark:text-gray-400 text-sm">
-                AI is conducting comprehensive research...
+                {t.researching}
               </p>
             </div>
           ) : (
             <p className="text-gray-600 dark:text-gray-400">
-              Starting research process...
+              {t.startingResearch}
             </p>
           )}
         </div>
@@ -846,7 +898,7 @@ Generated by Deep Research Agent v2`
         {/* Sources (inline, like Perplexity) */}
         {researchSources.length > 0 && (
           <div className="mt-6 pt-4 border-t border-gray-200 dark:border-neutral-700">
-            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Sources</h3>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">{t.sources}</h3>
             <div className="flex flex-wrap gap-2">
               {researchSources.slice(0, 6).map((source, index) => {
                 const domain = source.replace(/^https?:\/\//, '').split('/')[0]
@@ -927,7 +979,7 @@ Generated by Deep Research Agent v2`
       return (
         <div className="text-center py-8 text-gray-500 dark:text-gray-400">
           <Brain className="w-8 h-8 mx-auto mb-2 opacity-50" />
-          <p>No thinking steps yet. Start a research query to see the AI&apos;s reasoning process.</p>
+          <p>{t.noStepsYet}</p>
         </div>
       )
     }
@@ -977,9 +1029,9 @@ Generated by Deep Research Agent v2`
                               if (urls.length > 0) setResearchSources(urls)
                             }}
                             className="m-2 px-2 py-0.5 text-xs text-zinc-700 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-900/30 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 border border-zinc-300 dark:border-zinc-800 rounded-md transition-colors opacity-0 group-hover:opacity-100"
-                            title="Show this report in the main chat"
+                            title={t.showInChat}
                           >
-                            Show in Chat
+                            {t.showInChat}
                           </button>
                         ) : null
                       })()}
@@ -1022,7 +1074,7 @@ Generated by Deep Research Agent v2`
                   {event.metadata && Object.keys(event.metadata).length > 0 && (
                     <details className="mt-2">
                       <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">
-                        View metadata
+                        {t.viewMetadata}
                       </summary>
                       <pre className="text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded mt-1 overflow-auto">
                         {JSON.stringify(event.metadata, null, 2)}
@@ -1062,7 +1114,7 @@ Generated by Deep Research Agent v2`
                   <div className="w-1.5 h-1.5 bg-zinc-800 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
                   <div className="w-1.5 h-1.5 bg-zinc-800 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
                 </div>
-                <span className="text-xs text-zinc-800 ml-2">Working...</span>
+                <span className="text-xs text-zinc-800 ml-2">{t.workingOn}...</span>
               </div>
             </div>
           </div>
@@ -1072,8 +1124,8 @@ Generated by Deep Research Agent v2`
         {allEvents.length === 0 && !isStreaming && (
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             <div className="text-2xl mb-2">🔍</div>
-            <div className="text-sm">No thinking steps yet</div>
-            <div className="text-xs mt-1">Steps will appear here as AI processes your research</div>
+            <div className="text-sm">{t.noThinkingSteps}</div>
+            <div className="text-xs mt-1">{t.stepsWillAppear}</div>
           </div>
         )}
         </div>
@@ -1113,8 +1165,8 @@ Generated by Deep Research Agent v2`
         {allSources.length === 0 && (
           <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-8">
             <ExternalLink className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-            <div>No sources available yet</div>
-            <div className="text-xs mt-1">Sources will appear as research progresses</div>
+            <div>{t.noSourcesAvailable}</div>
+            <div className="text-xs mt-1">{t.sourcesWillAppear}</div>
           </div>
         )}
       </div>
@@ -1126,10 +1178,10 @@ Generated by Deep Research Agent v2`
     <div className="h-screen flex flex-col bg-white dark:bg-neutral-900">
       {/* Header - Fixed Height */}
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-neutral-700">
-        <div className="px-4 py-[18px]">
+        <div className="p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Research Session</h2>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t.researchSession}</h2>
               {/* Mobile sidebar toggle */}
               {(streamingEvents.length > 0 || isStreaming) && (
                 <button
@@ -1211,7 +1263,7 @@ Generated by Deep Research Agent v2`
                   )}
                 >
                   <Brain className="w-4 h-4 inline mr-1" />
-                  Thinking Steps
+                  {t.thinkingSteps}
                 </button>
                 <button
                   onClick={() => setActiveTab('sources')}
@@ -1223,7 +1275,7 @@ Generated by Deep Research Agent v2`
                   )}
                 >
                   <ExternalLink className="w-4 h-4 inline mr-1" />
-                  Sources
+                  {t.sources}
                 </button>
               </div>
             </div>
@@ -1251,7 +1303,7 @@ Generated by Deep Research Agent v2`
             <div className="relative ml-auto w-full max-w-sm bg-white dark:bg-neutral-800 flex flex-col h-full">
               {/* Header with close button */}
               <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-neutral-700 flex-shrink-0">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Research Progress</h3>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t.researchProgress}</h3>
                 <button
                   onClick={() => setSidebarOpen(false)}
                   className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-700 rounded-lg transition-colors"
@@ -1272,7 +1324,7 @@ Generated by Deep Research Agent v2`
                   )}
                 >
                   <Brain className="w-4 h-4 inline mr-1" />
-                  Thinking Steps
+                  {t.thinkingSteps}
                 </button>
                 <button
                   onClick={() => setActiveTab('sources')}
@@ -1284,7 +1336,7 @@ Generated by Deep Research Agent v2`
                   )}
                 >
                   <ExternalLink className="w-4 h-4 inline mr-1" />
-                  Sources
+                  {t.sources}
                 </button>
               </div>
 
@@ -1307,7 +1359,7 @@ Generated by Deep Research Agent v2`
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask a research question..."
+            placeholder={t.askQuestion}
             className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-zinc-800 focus:border-transparent text-base"
             disabled={isStreaming}
           />
@@ -1319,7 +1371,7 @@ Generated by Deep Research Agent v2`
               className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center space-x-2 transition-colors flex-shrink-0"
             >
               <AlertCircle className="w-4 h-4" />
-              <span className="hidden sm:inline">Stop</span>
+              <span className="hidden sm:inline">{t.stop}</span>
             </button>
           ) : (
             <button
@@ -1328,7 +1380,7 @@ Generated by Deep Research Agent v2`
               className="px-4 py-3 bg-zinc-900 hover:bg-zinc-700 disabled:bg-gray-400 text-white rounded-lg flex items-center space-x-2 transition-colors flex-shrink-0"
             >
               <Send className="w-4 h-4" />
-              <span className="hidden sm:inline">Research</span>
+              <span className="hidden sm:inline">{t.researchBtn}</span>
             </button>
           )}
         </form>
