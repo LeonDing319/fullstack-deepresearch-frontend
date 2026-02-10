@@ -52,9 +52,9 @@ export function truncateText(text: string, maxLength: number): string {
  */
 export function getModelDisplayName(modelId: string): string {
   const modelNames: Record<string, string> = {
-    'openai': 'OpenAI GPT-5',
-    'anthropic': 'Anthropic Claude 4',
-    'kimi': 'Kimi K2 0905 Preview'
+    'zhipu': '智谱 GLM-4.7',
+    'deepseek': 'DeepSeek V3.2',
+    'kimi': 'Kimi K2 Thinking'
   }
   return modelNames[modelId] || modelId
 }
@@ -64,8 +64,8 @@ export function getModelDisplayName(modelId: string): string {
  */
 export function getModelColor(modelId: string): string {
   const modelColors: Record<string, string> = {
-    'openai': 'bg-green-500',
-    'anthropic': 'bg-orange-500', 
+    'zhipu': 'bg-blue-500',
+    'deepseek': 'bg-green-500',
     'kimi': 'bg-purple-500'
   }
   return modelColors[modelId] || 'bg-gray-500'

@@ -82,6 +82,8 @@ interface Translations {
   avgSources: string
   avgWords: string
   clickToViewReport: string
+  stopComparison: string
+  newComparison: string
 
   // History
   researchHistory: string
@@ -188,6 +190,8 @@ const translations: Record<Language, Translations> = {
     avgSources: '平均来源',
     avgWords: '平均字数',
     clickToViewReport: '点击查看报告',
+    stopComparison: '停止对比',
+    newComparison: '新建对比',
 
     researchHistory: '研究历史',
     historyDescription: '跟踪研究会话并对比模型性能。',
@@ -290,6 +294,8 @@ const translations: Record<Language, Translations> = {
     avgSources: 'Avg Sources',
     avgWords: 'Avg Words',
     clickToViewReport: 'Click to view report',
+    stopComparison: 'Stop',
+    newComparison: 'New Comparison',
 
     researchHistory: 'Research History',
     historyDescription: 'Track your research sessions and compare model performance over time.',

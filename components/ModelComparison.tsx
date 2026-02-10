@@ -7,9 +7,11 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Play,
+  Square,
+  Plus,
   Clock,
   CheckCircle2,
   AlertCircle,
@@ -98,6 +100,7 @@ const ModelComparison = () => {
     resultSummary?: { word_count: number; sources_found: number; duration: number }
   }>>({})
   const { apiKeys, setApiKeys, clearApiKeys } = useResearchState()
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const availableModels = [
     { id: 'zhipu', name: t.zhipuName, description: t.zhipuDesc },
@@ -127,6 +130,35 @@ const ModelComparison = () => {
     } finally {
       setLoading(false)
     }
+  }
+
+  const stopComparison = () => {
+    // Abort the SSE fetch request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setIsRunning(false)
+    // Mark any still-running models as failed
+    setModelProgress(prev => {
+      const updated = { ...prev }
+      Object.keys(updated).forEach(model => {
+        if (updated[model].status === 'running' || updated[model].status === 'pending') {
+          updated[model] = { ...updated[model], status: 'failed', stage: 'Stopped by user' }
+        }
+      })
+      return updated
+    })
+  }
+
+  const resetComparison = () => {
+    stopComparison()
+    setQuery('')
+    setEarlyResults([])
+    setLatestSession(null)
+    setModelProgress({})
+    setSelectedResult(null)
+    setError(null)
   }
 
   const runComparison = async () => {
@@ -175,6 +207,10 @@ const ModelComparison = () => {
         }))
       })
 
+      // Create AbortController for cancellation support
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
+
       const response = await fetch(`${BACKEND_URL}/research/compare`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -182,7 +218,8 @@ const ModelComparison = () => {
           query: trimmedQuery,
           models: selectedModels,
           api_keys: modelApiKeys
-        })
+        }),
+        signal: abortController.signal
       })
 
       if (!response.ok) {
@@ -291,6 +328,11 @@ const ModelComparison = () => {
       await fetchComparisonData()
 
     } catch (error: unknown) {
+      // Don't show error if user manually stopped
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('[Compare] Stopped by user')
+        return
+      }
       console.error('Error running comparison:', error)
       setError(error instanceof Error ? error.message : 'Unknown error occurred')
 
@@ -302,6 +344,7 @@ const ModelComparison = () => {
         }))
       })
     } finally {
+      abortControllerRef.current = null
       setIsRunning(false)
     }
   }
@@ -540,25 +583,37 @@ const ModelComparison = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={runComparison}
-              className="px-4 py-2 bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-900 text-white dark:text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              disabled={isRunning || !query.trim() || selectedModels.length === 0 || selectedModels.some(model => !apiKeys[model as keyof typeof apiKeys]?.trim())}
-            >
-              {isRunning ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {t.runningComparison}
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  {t.runComparisonBtn}
-                </>
-              )}
-            </button>
+            {isRunning ? (
+              <button
+                onClick={stopComparison}
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-md transition-colors flex items-center gap-2"
+              >
+                <Square className="w-4 h-4" />
+                {t.stopComparison}
+              </button>
+            ) : (
+              <button
+                onClick={runComparison}
+                className="px-4 py-2 bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-900 text-white dark:text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                disabled={!query.trim() || selectedModels.length === 0 || selectedModels.some(model => !apiKeys[model as keyof typeof apiKeys]?.trim())}
+              >
+                <Play className="w-4 h-4" />
+                {t.runComparisonBtn}
+              </button>
+            )}
 
-            {selectedModels.some(model => !apiKeys[model as keyof typeof apiKeys]?.trim()) && (
+            {/* New Comparison button - show when there are results or progress */}
+            {!isRunning && (Object.keys(modelProgress).length > 0 || latestSession) && (
+              <button
+                onClick={resetComparison}
+                className="px-4 py-2 text-zinc-700 dark:text-zinc-300 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 rounded-md transition-colors flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                {t.newComparison}
+              </button>
+            )}
+
+            {!isRunning && selectedModels.some(model => !apiKeys[model as keyof typeof apiKeys]?.trim()) && (
               <p className="text-sm text-zinc-900 dark:text-zinc-300">
                 {t.missingApiKeys}
               </p>
