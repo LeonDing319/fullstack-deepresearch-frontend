@@ -98,6 +98,10 @@ function MainContent() {
     return () => window.removeEventListener('hashchange', syncFromHash)
   }, [])
 
+  useEffect(() => {
+    // Sync hash when tab changes (no-op side effect for external listeners)
+  }, [activeTab])
+
   return (
     <div className="h-screen w-full bg-white dark:from-neutral-900 dark:to-neutral-800 flex overflow-hidden relative">
       {/* Sidebar */}
@@ -105,11 +109,16 @@ function MainContent() {
         {/* Sidebar Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-neutral-700">
           {!sidebarCollapsed && (
-            <div className="flex items-center space-x-3">
-              <div>
-                <h1 className="text-lg font-bold text-gray-900 dark:text-white">
-                  {t.appTitle}
-                </h1>
+            <div className="flex items-center space-x-3 overflow-hidden flex-1 mr-2">
+              <div className="overflow-hidden relative">
+                <div className="inline-flex animate-scroll-text hover:animation-paused">
+                  <h1 className="text-lg font-bold text-gray-900 dark:text-white whitespace-nowrap">
+                    {t.appTitle}
+                  </h1>
+                  <h1 className="text-lg font-bold text-gray-900 dark:text-white whitespace-nowrap pl-8" aria-hidden="true">
+                    {t.appTitle}
+                  </h1>
+                </div>
               </div>
             </div>
           )}
@@ -129,7 +138,7 @@ function MainContent() {
         {!sidebarCollapsed && (
           <div className="px-4 pt-0 pb-4">
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-1 gap-1 bg-gray-100 dark:bg-neutral-800 p-1 rounded-lg">
+              <TabsList className="grid w-full grid-cols-1 gap-1 bg-gray-100 dark:bg-neutral-800 p-1 rounded-lg my-[15px]">
                 <TabsTrigger
                   value="research"
                   className="flex items-center justify-start space-x-2 w-full data-[state=active]:bg-white dark:data-[state=active]:bg-neutral-700 data-[state=active]:shadow-sm rounded-md py-2.5 px-3 text-sm font-medium transition-all"
@@ -165,7 +174,7 @@ function MainContent() {
 
         {/* Connection Status & Language Toggle */}
         {!sidebarCollapsed && (
-          <div className="mt-auto px-4 py-4 border-t border-gray-200 dark:border-neutral-700">
+          <div className="mt-auto px-4 py-[21px] border-t border-gray-200 dark:border-neutral-700">
             <div className="flex items-center justify-between">
               <div className="text-sm text-gray-600 dark:text-gray-300">
                 <span className="inline-flex items-center space-x-2">

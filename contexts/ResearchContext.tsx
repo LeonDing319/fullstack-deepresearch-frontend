@@ -76,8 +76,7 @@ export const ResearchProvider = ({ children }: { children: ReactNode }) => {
   const [currentStage, setCurrentStage] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [selectedModel, setSelectedModel] = useState('zhipu')
-  const [apiKey, setApiKey] = useState('')
-  
+
   // Initialize API keys from localStorage
   const [apiKeys, setApiKeysState] = useState<ApiKeys>(() => {
     if (typeof window !== 'undefined') {
@@ -91,6 +90,20 @@ export const ResearchProvider = ({ children }: { children: ReactNode }) => {
       }
     }
     return { zhipu: '', deepseek: '', kimi: '' }
+  })
+
+  // Initialize apiKey from stored apiKeys so the submit button is enabled on load
+  const [apiKey, setApiKey] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('dra_api_keys')
+        if (stored) {
+          const keys = JSON.parse(stored)
+          return keys['zhipu'] || ''
+        }
+      } catch {}
+    }
+    return ''
   })
 
   // API key management functions

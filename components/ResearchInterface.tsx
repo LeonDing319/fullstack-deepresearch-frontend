@@ -3,7 +3,7 @@
 
 import React, { useState, useRef, useEffect } from 'react'
 import Image from 'next/image'
-import { Send, AlertCircle, Download, ExternalLink, Brain, Menu, X, Copy } from 'lucide-react'
+import { Send, AlertCircle, Download, ExternalLink, Brain, Menu, X, Copy, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useResearchState } from '@/contexts/ResearchContext'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -65,6 +65,10 @@ export default function ResearchInterface() {
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const researchIdRef = useRef<string | null>(null)
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const lastEventAtRef = useRef<number | null>(null)
+  const INACTIVITY_TIMEOUT = 60000 // 60 seconds
 
   // Persist/load session data so chat history survives tab switches
   useEffect(() => {
@@ -72,6 +76,15 @@ export default function ResearchInterface() {
       const cached = sessionStorage.getItem('dra_session_v1')
       if (cached) {
         const parsed = JSON.parse(cached)
+
+        // Guard: if we have a query but no meaningful content, it's a stale/failed session — discard it
+        const hasContent = (parsed.finalReportContent && parsed.finalReportContent.length > 0) ||
+                           (parsed.streamingContent && parsed.streamingContent.length > 100)
+        if (parsed.currentQuery && !hasContent) {
+          sessionStorage.removeItem('dra_session_v1')
+          return
+        }
+
         if (parsed.messages) setMessages(parsed.messages)
         if (parsed.streamingEvents) setStreamingEvents(parsed.streamingEvents)
         if (parsed.apiCallLogs) setApiCallLogs(parsed.apiCallLogs)
@@ -218,10 +231,14 @@ export default function ResearchInterface() {
   // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || !apiKey.trim() || isStreaming) return
+    const trimmedQuery = input.trim()
+    const hasApiKey = apiKey.trim().length > 0
+    if (!trimmedQuery || !hasApiKey || isStreaming) {
+      return
+    }
 
     console.log('=== NEW QUERY SUBMITTED ===')
-    console.log('New query:', input.trim())
+    console.log('New query:', trimmedQuery)
     console.log('Clearing previous research data...')
 
     // Store current research in chat history if it exists
@@ -242,7 +259,7 @@ export default function ResearchInterface() {
     }
 
     // Store the query before setting up new research
-    const queryToSend = input.trim()
+    const queryToSend = trimmedQuery
 
     // CRITICAL: Set new query flag FIRST to prevent sessionStorage race conditions
     setIsNewQuery(true)
@@ -266,12 +283,17 @@ export default function ResearchInterface() {
     setResearchBrief('')
     setResearchSources([])
     setActiveTab('thinking')
+    researchIdRef.current = null
 
     // Set currentQuery AFTER clearing other states
     setCurrentQuery(queryToSend)
 
+    // Start inactivity watchdog
+    resetInactivityTimer()
+
     // Create abort controller for this request
     abortControllerRef.current = new AbortController()
+    lastEventAtRef.current = null
 
     try {
       const response = await fetch(`${BACKEND_URL}/research/stream`, {
@@ -307,6 +329,7 @@ export default function ResearchInterface() {
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
+        resetInactivityTimer() // Reset watchdog on every data chunk
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
 
@@ -316,13 +339,22 @@ export default function ResearchInterface() {
               const eventData = JSON.parse(line.slice(6)) as StreamingEvent
               console.log('Received event:', eventData.type, eventData.stage)
 
+              const now = Date.now()
+              const gapSinceLastEventMs = lastEventAtRef.current ? now - lastEventAtRef.current : null
+              lastEventAtRef.current = now
+
+              // Capture research_id from session_start event
+              if (eventData.type === 'session_start' && (eventData as Record<string, unknown>).research_id) {
+                researchIdRef.current = (eventData as Record<string, unknown>).research_id as string
+              }
+
               // Clear the isNewQuery flag on first event to allow sessionStorage persistence
               if (isFirstEvent) {
                 isFirstEvent = false
                 setIsNewQuery(false)
                 console.log('First event received, isNewQuery flag cleared')
               }
-              
+
               // Handle different event types
               if (eventData.type === 'stage_start' || eventData.type === 'stage_update') {
                 setCurrentStage(eventData.stage || '')
@@ -572,6 +604,14 @@ export default function ResearchInterface() {
                 setStreamingEvents(prev => [...prev, eventData])
               } else if (eventData.type === 'error') {
                 setStreamingEvents(prev => [...prev, eventData])
+                // Show the actual error to the user in the main content area
+                const errorMsg = eventData.error || eventData.content || 'Unknown error'
+                const isAuthError = /401|403|unauthorized|authentication|invalid.*key|incorrect.*key/i.test(errorMsg)
+                if (isAuthError) {
+                  setStreamingContent(`❌ **Authentication Error**\n\n${errorMsg}\n\nPlease check your API key and try again.`)
+                } else {
+                  setStreamingContent(`❌ **Research Error**\n\n${errorMsg}`)
+                }
               }
 
             } catch (error) {
@@ -585,20 +625,76 @@ export default function ResearchInterface() {
       const errorMessage = error as Error
       if (errorMessage.name !== 'AbortError') {
         console.error('Streaming error:', error)
-        setStreamingContent(`❌ **Research Error**\n\n${errorMessage.message}\n\nPlease try again or check your API key.`)
+        const msg = errorMessage.message || 'Unknown error'
+        const isAuthError = /401|403|unauthorized|authentication|invalid.*key|incorrect.*key/i.test(msg)
+        if (isAuthError) {
+          setStreamingContent(`❌ **Authentication Error**\n\n${msg}\n\nPlease check your API key and try again.`)
+        } else {
+          setStreamingContent(`❌ **Research Error**\n\n${msg}\n\nPlease try again.`)
+        }
       }
     } finally {
       setIsStreaming(false)
       setCurrentStage('')
+      clearInactivityTimer()
+      researchIdRef.current = null
     }
   }
 
-  // Stop streaming
-  const stopStreaming = () => {
+  // Clear inactivity watchdog timer
+  const clearInactivityTimer = () => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current)
+      inactivityTimerRef.current = null
+    }
+  }
+
+  // Stop streaming and fully reset to initial state
+  const stopStreaming = (reason: 'manual' | 'inactivity_timeout' = 'manual') => {
+    // 1. Abort the fetch request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
+      abortControllerRef.current = null
     }
+
+    // 2. Notify backend to cancel (fire-and-forget)
+    if (researchIdRef.current) {
+      fetch(`${BACKEND_URL}/research/${researchIdRef.current}/cancel`, {
+        method: 'POST',
+      }).catch(() => {})
+      researchIdRef.current = null
+    }
+
+    // 3. Reset ALL state to initial values
     setIsStreaming(false)
+    setStreamingEvents([])
+    setApiCallLogs([])
+    setCurrentStage('')
+    setFinalReportContent('')
+    setStreamingContent('')
+    setResearchBrief('')
+    setResearchSources([])
+    setCurrentQuery('')
+    setActiveTab('thinking')
+    setIsNewQuery(false)
+    setSidebarOpen(false)
+
+    // 4. Clear sessionStorage
+    try {
+      sessionStorage.removeItem('dra_session_v1')
+    } catch {}
+
+    // 5. Clear inactivity timer
+    clearInactivityTimer()
+  }
+
+  // Reset inactivity watchdog - called on every SSE data received
+  const resetInactivityTimer = () => {
+    clearInactivityTimer()
+    inactivityTimerRef.current = setTimeout(() => {
+      console.warn('Inactivity timeout: no events received for 60s')
+      stopStreaming('inactivity_timeout')
+    }, INACTIVITY_TIMEOUT)
   }
 
   // Export functions
@@ -665,7 +761,7 @@ export default function ResearchInterface() {
     const docContent = `${currentQuery || 'Deep Research Report'}
 
 Generated on: ${new Date().toLocaleString()}
-Model Used: ${selectedModel === 'zhipu' ? '智谱 GLM-4.7' : selectedModel === 'deepseek' ? 'DeepSeek V3' : 'Kimi K2 Thinking'}
+Model Used: ${selectedModel === 'zhipu' ? '智谱 GLM-4.7' : selectedModel === 'deepseek' ? 'DeepSeek V3.2' : 'Kimi K2 Thinking'}
 
 ${reportContent}
 
@@ -698,7 +794,7 @@ Generated by Deep Research Agent v2`
     const docContent = `${currentQuery || 'Deep Research Report'}
 
 Generated on: ${new Date().toLocaleString()}
-Model Used: ${selectedModel === 'zhipu' ? '智谱 GLM-4.7' : selectedModel === 'deepseek' ? 'DeepSeek V3' : 'Kimi K2 Thinking'}
+Model Used: ${selectedModel === 'zhipu' ? '智谱 GLM-4.7' : selectedModel === 'deepseek' ? 'DeepSeek V3.2' : 'Kimi K2 Thinking'}
 
 ${reportContent}
 
@@ -1178,10 +1274,20 @@ Generated by Deep Research Agent v2`
     <div className="h-screen flex flex-col bg-white dark:bg-neutral-900">
       {/* Header - Fixed Height */}
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-neutral-700">
-        <div className="p-4">
+        <div className="px-4 py-[18px]">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t.researchSession}</h2>
+              {/* New Research button - visible when there's content and not streaming */}
+              {!isStreaming && currentQuery && (
+                <button
+                  onClick={() => stopStreaming('manual')}
+                  className="flex items-center space-x-1 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 rounded-lg transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{t.newResearch}</span>
+                </button>
+              )}
               {/* Mobile sidebar toggle */}
               {(streamingEvents.length > 0 || isStreaming) && (
                 <button
@@ -1227,11 +1333,11 @@ Generated by Deep Research Agent v2`
           {/* Progress Bar */}
           {isStreaming && (
             <div className="mt-3">
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                <div className="bg-gradient-to-r from-zinc-800 to-zinc-800 h-2 rounded-full transition-all duration-1000 ease-out"
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                <div className="progress-bar-animated h-2 rounded-full transition-all duration-1000 ease-out"
                      style={{width: `${Math.min(calculateProgress(), 100)}%`}}></div>
               </div>
-              <div className="flex justify-between text-xs text-gray-500 mt-1">
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
                 <span>Progress</span>
                 <span>{Math.min(Math.round(calculateProgress()), 100)}%</span>
               </div>
@@ -1353,14 +1459,14 @@ Generated by Deep Research Agent v2`
       </div>
 
       {/* Input Form - DIV 3 - Fixed Height at Bottom */}
-      <div className="flex-shrink-0 p-4 bg-white dark:bg-neutral-800 border-t border-gray-200 dark:border-neutral-700">
+      <div className="flex-shrink-0 p-4 bg-gray-50 dark:bg-neutral-900/50 border-t border-gray-200 dark:border-neutral-700/50">
         <form onSubmit={handleSubmit} className="flex space-x-2">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={t.askQuestion}
-            className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-zinc-800 focus:border-transparent text-base"
+            className="flex-1 px-4 py-3 border border-gray-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-800 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:ring-2 focus:ring-zinc-500 dark:focus:ring-zinc-600 focus:border-transparent text-base transition-all"
             disabled={isStreaming}
           />
           
@@ -1368,7 +1474,7 @@ Generated by Deep Research Agent v2`
             <button
               type="button"
               onClick={stopStreaming}
-              className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg flex items-center space-x-2 transition-colors flex-shrink-0"
+              className="px-4 py-3 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-lg flex items-center space-x-2 transition-all shadow-sm hover:shadow flex-shrink-0"
             >
               <AlertCircle className="w-4 h-4" />
               <span className="hidden sm:inline">{t.stop}</span>
@@ -1377,7 +1483,7 @@ Generated by Deep Research Agent v2`
             <button
               type="submit"
               disabled={!input.trim() || !apiKey.trim()}
-              className="px-4 py-3 bg-zinc-900 hover:bg-zinc-700 disabled:bg-gray-400 text-white rounded-lg flex items-center space-x-2 transition-colors flex-shrink-0"
+              className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:text-gray-500 dark:disabled:text-gray-500 text-white rounded-lg flex items-center space-x-2 transition-all shadow-sm hover:shadow flex-shrink-0"
             >
               <Send className="w-4 h-4" />
               <span className="hidden sm:inline">{t.researchBtn}</span>

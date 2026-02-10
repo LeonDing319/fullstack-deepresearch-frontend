@@ -48,6 +48,7 @@ interface Translations {
   processing: string
   viewMetadata: string
   workingOn: string
+  newResearch: string
 
   // Compare
   modelComparison: string
@@ -140,6 +141,7 @@ const translations: Record<Language, Translations> = {
     processing: '处理中',
     viewMetadata: '查看元数据',
     workingOn: '正在工作',
+    newResearch: '新建研究',
 
     modelComparison: '模型性能对比',
     compareDescription: '对比不同 AI 模型的性能指标。对同一问题运行多个模型，查看详细的时间、质量和性能差异。',
@@ -180,8 +182,8 @@ const translations: Record<Language, Translations> = {
 
     zhipuName: '智谱 GLM-4.7',
     zhipuDesc: '智谱AI最新旗舰模型，支持交错式思考',
-    deepseekName: 'DeepSeek V3',
-    deepseekDesc: 'DeepSeek 671B MoE模型，GPT-5级性能',
+    deepseekName: 'DeepSeek V3.2',
+    deepseekDesc: 'DeepSeek V3.2 671B MoE模型，GPT-5级性能',
     kimiName: 'Kimi K2 Thinking',
     kimiDesc: '月之暗面 1T参数思考模型 (251104)',
   },
@@ -227,6 +229,7 @@ const translations: Record<Language, Translations> = {
     processing: 'Processing',
     viewMetadata: 'View metadata',
     workingOn: 'Working',
+    newResearch: 'New Research',
 
     modelComparison: 'Model Performance Comparison',
     compareDescription: 'Compare AI model performance across different metrics. Run the same query on multiple models to see detailed timing, quality, and performance differences.',
@@ -267,8 +270,8 @@ const translations: Record<Language, Translations> = {
 
     zhipuName: 'Zhipu GLM-4.7',
     zhipuDesc: 'Zhipu AI flagship model with interleaved thinking',
-    deepseekName: 'DeepSeek V3',
-    deepseekDesc: 'DeepSeek 671B MoE model, GPT-5 level performance',
+    deepseekName: 'DeepSeek V3.2',
+    deepseekDesc: 'DeepSeek V3.2 671B MoE model, GPT-5 level performance',
     kimiName: 'Kimi K2 Thinking',
     kimiDesc: 'Moonshot 1T parameter thinking model (251104)',
   }

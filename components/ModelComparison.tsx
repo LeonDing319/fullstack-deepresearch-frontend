@@ -86,13 +86,16 @@ const ModelComparison = () => {
   const [selectedModels, setSelectedModels] = useState<string[]>(['zhipu', 'deepseek', 'kimi'])
   const [isRunning, setIsRunning] = useState(false)
   const [latestSession, setLatestSession] = useState<ComparisonSession | null>(null)
+  const [earlyResults, setEarlyResults] = useState<ComparisonResult[]>([])
   const [selectedResult, setSelectedResult] = useState<ComparisonResult | null>(null)
   const [showKeyManager, setShowKeyManager] = useState(false)
   const [modelProgress, setModelProgress] = useState<Record<string, {
     stage: string
     startTime: number
     currentDuration: number
+    progress: number
     status: 'pending' | 'running' | 'completed' | 'failed'
+    resultSummary?: { word_count: number; sources_found: number; duration: number }
   }>>({})
   const { apiKeys, setApiKeys, clearApiKeys } = useResearchState()
 
@@ -127,7 +130,10 @@ const ModelComparison = () => {
   }
 
   const runComparison = async () => {
-    if (!query.trim() || selectedModels.length === 0) return
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery || selectedModels.length === 0) {
+      return
+    }
 
     // Check if all selected models have API keys
     const missingKeys = selectedModels.filter(model => !apiKeys[model as keyof typeof apiKeys]?.trim())
@@ -138,6 +144,8 @@ const ModelComparison = () => {
 
     setIsRunning(true)
     setError(null)
+    setEarlyResults([])
+    setLatestSession(null)
 
     // Initialize progress for each model
     const initialProgress: typeof modelProgress = {}
@@ -146,6 +154,7 @@ const ModelComparison = () => {
         stage: 'Initializing...',
         startTime: Date.now(),
         currentDuration: 0,
+        progress: 0,
         status: 'pending'
       }
     })
@@ -162,7 +171,7 @@ const ModelComparison = () => {
       selectedModels.forEach(model => {
         setModelProgress(prev => ({
           ...prev,
-          [model]: { ...prev[model], status: 'running', stage: 'Running research...' }
+          [model]: { ...prev[model], status: 'running', stage: 'Running research...', progress: 0 }
         }))
       })
 
@@ -170,7 +179,7 @@ const ModelComparison = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: query.trim(),
+          query: trimmedQuery,
           models: selectedModels,
           api_keys: modelApiKeys
         })
@@ -180,22 +189,103 @@ const ModelComparison = () => {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
-      const session: ComparisonSession = await response.json()
-      setLatestSession(session)
+      // Guard against null response body
+      if (!response.body) {
+        throw new Error('Response body is null - SSE stream failed to open')
+      }
 
-      // Update final progress
-      selectedModels.forEach(model => {
-        const result = session.results.find(r => r.model === model)
-        setModelProgress(prev => ({
-          ...prev,
-          [model]: {
-            ...prev[model],
-            status: result?.success ? 'completed' : 'failed',
-            stage: result?.success ? 'Completed' : result?.error || 'Failed',
-            currentDuration: result?.duration || 0
+      // Read SSE stream for real-time per-model progress
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let sseBuffer = ''
+      let eventCount = 0
+
+      // Stream timeout: cancel after 6 minutes to prevent infinite hang
+      const STREAM_TIMEOUT_MS = 6 * 60 * 1000
+      const streamTimeout = setTimeout(() => {
+        console.warn('[Compare SSE] Stream timeout reached (6 min), cancelling reader')
+        reader.cancel()
+      }, STREAM_TIMEOUT_MS)
+
+      console.log('[Compare SSE] Stream started, reading events...')
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) {
+            console.log(`[Compare SSE] Stream ended after ${eventCount} events`)
+            break
           }
-        }))
-      })
+          sseBuffer += decoder.decode(value, { stream: true })
+          const lines = sseBuffer.split('\n')
+          sseBuffer = lines.pop() || ''
+
+          for (const rawLine of lines) {
+            const line = rawLine.replace(/\r$/, '') // Handle \r\n line endings
+            if (line.startsWith('data: ')) {
+              try {
+                const evt = JSON.parse(line.slice(6))
+                eventCount++
+                console.log(`[Compare SSE] Event #${eventCount}:`, evt.type, evt.model, 'progress:', evt.progress)
+
+                if (evt.type === 'session_start') {
+                  console.log('[Compare SSE] Stream connected, session:', evt.session_id)
+                } else if (evt.type === 'model_progress') {
+                  setModelProgress(prev => ({
+                    ...prev,
+                    [evt.model]: {
+                      ...prev[evt.model],
+                      stage: evt.stage,
+                      currentDuration: evt.elapsed,
+                      progress: evt.progress,
+                      status: 'running'
+                    }
+                  }))
+                } else if (evt.type === 'model_complete') {
+                  setModelProgress(prev => ({
+                    ...prev,
+                    [evt.model]: {
+                      ...prev[evt.model],
+                      stage: 'Completed',
+                      currentDuration: evt.elapsed,
+                      progress: 100,
+                      status: 'completed',
+                      resultSummary: evt.result_summary
+                    }
+                  }))
+                  // Collect result immediately for early viewing
+                  if (evt.result) {
+                    setEarlyResults(prev => [...prev.filter(r => r.model !== evt.model), evt.result as ComparisonResult])
+                  }
+                } else if (evt.type === 'model_error') {
+                  setModelProgress(prev => ({
+                    ...prev,
+                    [evt.model]: {
+                      ...prev[evt.model],
+                      stage: evt.stage || 'Failed',
+                      currentDuration: evt.elapsed,
+                      progress: evt.progress || 0,
+                      status: 'failed'
+                    }
+                  }))
+                } else if (evt.type === 'error') {
+                  // Backend-level stream error
+                  console.error('[Compare SSE] Backend error:', evt.message)
+                  setError(evt.message || 'Backend stream error')
+                } else if (evt.type === 'session_complete') {
+                  setLatestSession(evt.session as ComparisonSession)
+                } else if (evt.type === 'heartbeat') {
+                  console.log('[Compare SSE] Heartbeat received - stream is alive')
+                }
+              } catch {
+                // Ignore parse errors for incomplete JSON
+              }
+            }
+          }
+        }
+      } finally {
+        clearTimeout(streamTimeout)
+      }
 
       // Refresh comparison data
       await fetchComparisonData()
@@ -208,7 +298,7 @@ const ModelComparison = () => {
       selectedModels.forEach(model => {
         setModelProgress(prev => ({
           ...prev,
-          [model]: { ...prev[model], status: 'failed', stage: 'Failed' }
+          [model]: { ...prev[model], status: 'failed', stage: 'Failed', progress: prev[model]?.progress || 0 }
         }))
       })
     } finally {
@@ -216,16 +306,33 @@ const ModelComparison = () => {
     }
   }
 
-  // Update duration during comparison
+  // Update duration during comparison (with proper immutable state updates)
   useEffect(() => {
     if (!isRunning) return
 
     const interval = setInterval(() => {
       setModelProgress(prev => {
-        const updated = { ...prev }
-        Object.keys(updated).forEach(model => {
-          if (updated[model].status === 'running') {
-            updated[model].currentDuration = (Date.now() - updated[model].startTime) / 1000
+        const updated: typeof prev = {}
+        const models = Object.keys(prev)
+        models.forEach((model, modelIndex) => {
+          if (prev[model].status === 'running') {
+            const elapsed = (Date.now() - prev[model].startTime) / 1000
+            // Per-model synthetic progress with unique offset per model index.
+            // Each model gets a different growth rate & delay so they never
+            // show identical percentages while waiting for real backend events.
+            const modelDelay = 2 + modelIndex * 1.2   // 2s, 3.2s, 4.4s
+            const modelRate = 0.35 + modelIndex * 0.12 // 0.35, 0.47, 0.59
+            const adjustedElapsed = Math.max(0, elapsed - modelDelay)
+            const syntheticProgress = prev[model].progress < 15 && adjustedElapsed > 0
+              ? Math.min(15, Math.max(prev[model].progress, 1 + Math.floor(adjustedElapsed * modelRate)))
+              : prev[model].progress
+            updated[model] = {
+              ...prev[model],
+              currentDuration: elapsed,
+              progress: Math.max(prev[model].progress, syntheticProgress)
+            }
+          } else {
+            updated[model] = prev[model]
           }
         })
         return updated
@@ -460,8 +567,8 @@ const ModelComparison = () => {
         </div>
       </div>
 
-      {/* Live Progress Tracking */}
-      {isRunning && Object.keys(modelProgress).length > 0 && (
+      {/* Live Progress Tracking - visible until final session results arrive */}
+      {Object.keys(modelProgress).length > 0 && (isRunning || !latestSession) && (
         <div className="bg-white dark:bg-neutral-900 rounded-xl border border-gray-200 dark:border-neutral-700 overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200 dark:border-neutral-700 bg-zinc-50 dark:bg-zinc-900/10">
             <div className="flex items-center gap-3">
@@ -479,8 +586,18 @@ const ModelComparison = () => {
                 const progress = modelProgress[model]
                 if (!progress) return null
 
+                const earlyResult = earlyResults.find(r => r.model === model)
+                const isClickable = progress.status === 'completed' && earlyResult
+
                 return (
-                  <div key={model} className="border border-gray-200 dark:border-neutral-700 rounded-xl p-4 bg-white dark:bg-neutral-800">
+                  <div
+                    key={model}
+                    className={cn(
+                      "border border-gray-200 dark:border-neutral-700 rounded-xl p-4 bg-white dark:bg-neutral-800 transition-all",
+                      isClickable && "cursor-pointer hover:border-zinc-400 dark:hover:border-zinc-700 hover:shadow-md"
+                    )}
+                    onClick={() => isClickable && setSelectedResult(earlyResult)}
+                  >
                     <div className="flex items-center justify-between mb-3">
                       <h4 className="font-medium text-gray-900 dark:text-white">
                         {getModelName(model)}
@@ -503,28 +620,51 @@ const ModelComparison = () => {
 
                     {/* Progress Bar */}
                     <div className="w-full bg-gray-200 dark:bg-neutral-700 rounded-full h-2 mb-3 overflow-hidden">
-                      {progress.status === 'running' ? (
-                        <div className="h-2 bg-gradient-to-r from-zinc-800 to-zinc-300 rounded-full animate-pulse w-full" />
-                      ) : (
-                        <div
-                          className={cn(
-                            "h-2 rounded-full transition-all duration-300",
-                            progress.status === 'completed' ? "bg-green-500" :
-                            progress.status === 'failed' ? "bg-red-500" :
-                            "bg-gray-300 dark:bg-neutral-600"
-                          )}
-                          style={{ width: progress.status === 'completed' ? '100%' : progress.status === 'failed' ? '100%' : '0%' }}
-                        />
-                      )}
+                      <div
+                        className={cn(
+                          "h-2 rounded-full transition-all duration-500 ease-out",
+                          progress.status === 'running' ? "bg-gradient-to-r from-zinc-800 to-zinc-500" :
+                          progress.status === 'completed' ? "bg-green-500" :
+                          progress.status === 'failed' ? "bg-red-500" :
+                          "bg-gray-300 dark:bg-neutral-600"
+                        )}
+                        style={{ width: `${progress.status === 'completed' ? 100 : progress.status === 'failed' ? 100 : (progress.progress || 0)}%` }}
+                      />
                     </div>
 
-                    {/* Current Stage */}
-                    <div className="text-sm text-gray-600 dark:text-gray-300">
-                      <div className="flex items-center gap-2">
+                    {/* Current Stage & Progress */}
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300">
                         <Timer className="w-3 h-3" />
                         <span>{progress.stage}</span>
                       </div>
+                      {progress.status === 'running' && (
+                        <span className="text-xs font-medium tabular-nums text-zinc-700 dark:text-zinc-300">
+                          {progress.progress || 0}%
+                        </span>
+                      )}
                     </div>
+
+                    {/* Result summary for models that finished early */}
+                    {progress.status === 'completed' && progress.resultSummary && (
+                      <div className="mt-3 pt-3 border-t border-gray-200 dark:border-neutral-700">
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                            <FileText className="w-3 h-3" />
+                            <span>{progress.resultSummary.word_count} {t.words}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                            <Database className="w-3 h-3" />
+                            <span>{progress.resultSummary.sources_found} {t.sources}</span>
+                          </div>
+                        </div>
+                        {isClickable && (
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 text-center">
+                            {t.clickToViewReport || 'Click to view report'}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}

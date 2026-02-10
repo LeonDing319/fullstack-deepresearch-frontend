@@ -151,3 +151,62 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-bg);
 }
+
+/* 横向滚动文字动画 */
+@keyframes scroll-text {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-scroll-text {
+  animation: scroll-text 12s linear infinite;
+}
+
+.animate-scroll-text:hover {
+  animation-play-state: paused;
+}
+
+/* 进度条绿色渐变流动动画 */
+@keyframes progress-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.progress-bar-animated {
+  background: linear-gradient(
+    90deg,
+    #10b981,
+    #34d399,
+    #6ee7b7,
+    #34d399,
+    #10b981
+  );
+  background-size: 200% 100%;
+  animation: progress-flow 2s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+}
+
+@media (prefers-color-scheme: dark) {
+  .progress-bar-animated {
+    background: linear-gradient(
+      90deg,
+      #059669,
+      #10b981,
+      #34d399,
+      #10b981,
+      #059669
+    );
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
+  }
+}
