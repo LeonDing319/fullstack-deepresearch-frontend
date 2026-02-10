@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { useResearchState } from '@/contexts/ResearchContext'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { createGoogleDoc } from '@/lib/googleDocs'
+import { useSaveResearch } from '@/lib/useResearchHistory'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
@@ -39,6 +40,7 @@ type ResearchTab = 'thinking' | 'sources'
 export default function ResearchInterface() {
   const { selectedModel, apiKey, isStreaming, setIsStreaming } = useResearchState()
   const { t } = useLanguage()
+  const { saveResearch } = useSaveResearch()
 
   // Backend URL configuration
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080'
@@ -68,6 +70,7 @@ export default function ResearchInterface() {
   const researchIdRef = useRef<string | null>(null)
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastEventAtRef = useRef<number | null>(null)
+  const researchStartTimeRef = useRef<number | null>(null)
   const INACTIVITY_TIMEOUT = 60000 // 60 seconds
 
   // Persist/load session data so chat history survives tab switches
@@ -288,6 +291,9 @@ export default function ResearchInterface() {
     // Set currentQuery AFTER clearing other states
     setCurrentQuery(queryToSend)
 
+    // Record research start time for duration tracking
+    researchStartTimeRef.current = Date.now()
+
     // Start inactivity watchdog
     resetInactivityTimer()
 
@@ -344,8 +350,8 @@ export default function ResearchInterface() {
               lastEventAtRef.current = now
 
               // Capture research_id from session_start event
-              if (eventData.type === 'session_start' && (eventData as Record<string, unknown>).research_id) {
-                researchIdRef.current = (eventData as Record<string, unknown>).research_id as string
+              if (eventData.type === 'session_start' && (eventData as unknown as Record<string, unknown>).research_id) {
+                researchIdRef.current = (eventData as unknown as Record<string, unknown>).research_id as string
               }
 
               // Clear the isNewQuery flag on first event to allow sessionStorage persistence
@@ -439,6 +445,36 @@ export default function ResearchInterface() {
                 setIsStreaming(false)
                 setCurrentStage('completed')
 
+                // Priority 0: Use report_content from research_complete event (mirrors Compare pattern)
+                const directReport = (eventData as unknown as Record<string, unknown>).report_content as string | undefined
+                if (directReport && directReport.length > 100) {
+                  console.log('✅ Using report_content from research_complete event')
+                  // Extract clean report: strip the "📊 Step X: ..." prefix if present
+                  let cleanReport = directReport
+                  const reportMarker = '📄 Final Report: '
+                  const markerIdx = cleanReport.indexOf(reportMarker)
+                  if (markerIdx !== -1) {
+                    cleanReport = cleanReport.substring(markerIdx + reportMarker.length)
+                  }
+                  setFinalReportContent(cleanReport)
+                  setStreamingContent(cleanReport)
+                  const sources = extractSourcesFromContent(cleanReport)
+                  setResearchSources(sources)
+
+                  // Save to InstantDB for persistent history
+                  const researchDuration = researchStartTimeRef.current ? Date.now() - researchStartTimeRef.current : 0
+                  saveResearch({
+                    query: queryToSend,
+                    model: selectedModel,
+                    reportContent: cleanReport,
+                    sources: sources,
+                    duration: researchDuration,
+                  }).catch(err => console.error('InstantDB save failed:', err))
+
+                  setStreamingEvents(prev => [...prev, eventData])
+                  return
+                }
+
                 // Use setState callback pattern to avoid closure issues with stale state
                 // This ensures we have access to the latest events when searching for the report
                 setStreamingEvents(prevEvents => {
@@ -512,6 +548,17 @@ export default function ResearchInterface() {
                       console.log('✅ SHOWING FINAL REPORT:', reportContent.substring(0, 200))
                       setFinalReportContent(reportContent)
                       setStreamingContent(reportContent)
+
+                      // Save to InstantDB for persistent history
+                      const researchDuration = researchStartTimeRef.current ? Date.now() - researchStartTimeRef.current : 0
+                      const sourcesFromReport = extractSourcesFromContent(reportContent)
+                      saveResearch({
+                        query: queryToSend,
+                        model: selectedModel,
+                        reportContent: reportContent,
+                        sources: sourcesFromReport,
+                        duration: researchDuration,
+                      }).catch(err => console.error('InstantDB save failed:', err))
                     } else {
                       console.log('❌ NO REPORT FOUND - falling back to message')
                       allEvents.forEach((e, i) => {
@@ -1473,7 +1520,7 @@ Generated by Deep Research Agent v2`
           {isStreaming ? (
             <button
               type="button"
-              onClick={stopStreaming}
+              onClick={() => stopStreaming()}
               className="px-4 py-3 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700 text-white rounded-lg flex items-center space-x-2 transition-all shadow-sm hover:shadow flex-shrink-0"
             >
               <AlertCircle className="w-4 h-4" />

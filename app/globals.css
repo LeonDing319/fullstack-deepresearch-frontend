@@ -145,6 +145,13 @@ body {
   background: var(--muted);
 }
 
+/* 隐藏 InstantDB devtools/badge */
+[id*="instantdb"],
+[class*="instantdb"],
+[data-instantdb-devtool] {
+  display: none !important;
+}
+
 /* 输入框聚焦样式 */
 input:focus, textarea:focus, select:focus {
   outline: none;

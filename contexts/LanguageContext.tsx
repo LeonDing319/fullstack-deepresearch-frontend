@@ -81,6 +81,7 @@ interface Translations {
   avgTime: string
   avgSources: string
   avgWords: string
+  clickToViewReport: string
 
   // History
   researchHistory: string
@@ -88,6 +89,19 @@ interface Translations {
   databaseIntegration: string
   databaseDescription: string
   setupGuide: string
+  historyCount: string
+  searchHistory: string
+  noHistoryYet: string
+  noHistoryDesc: string
+  noSearchResults: string
+  selectSessionToView: string
+  backToList: string
+  deleteSession: string
+  confirmDeleteMsg: string
+  confirmDeleteBtn: string
+  cancelBtn: string
+  historyConnectionError: string
+  historyConnectionErrorDesc: string
 
   // Models
   zhipuName: string
@@ -173,12 +187,26 @@ const translations: Record<Language, Translations> = {
     avgTime: '平均时间',
     avgSources: '平均来源',
     avgWords: '平均字数',
+    clickToViewReport: '点击查看报告',
 
     researchHistory: '研究历史',
     historyDescription: '跟踪研究会话并对比模型性能。',
     databaseIntegration: '数据库集成可用',
     databaseDescription: '通过集成 Supabase 启用持久化历史和模型对比跟踪。可以保存研究会话、对比模型性能指标，并跟踪改进。',
     setupGuide: '设置指南：查看 README.md 获取 Supabase 集成说明',
+    historyCount: '条记录',
+    searchHistory: '搜索历史记录...',
+    noHistoryYet: '暂无研究历史',
+    noHistoryDesc: '完成你的第一次研究后，历史记录将自动保存在这里。',
+    noSearchResults: '未找到匹配的记录',
+    selectSessionToView: '选择一条研究记录查看详情',
+    backToList: '返回列表',
+    deleteSession: '删除此记录',
+    confirmDeleteMsg: '确定要删除这条研究记录吗？此操作不可撤销。',
+    confirmDeleteBtn: '删除',
+    cancelBtn: '取消',
+    historyConnectionError: '数据库连接失败',
+    historyConnectionErrorDesc: '无法连接到 InstantDB。请检查你的 App ID 是否正确配置。',
 
     zhipuName: '智谱 GLM-4.7',
     zhipuDesc: '智谱AI最新旗舰模型，支持交错式思考',
@@ -261,12 +289,26 @@ const translations: Record<Language, Translations> = {
     avgTime: 'Avg Time',
     avgSources: 'Avg Sources',
     avgWords: 'Avg Words',
+    clickToViewReport: 'Click to view report',
 
     researchHistory: 'Research History',
     historyDescription: 'Track your research sessions and compare model performance over time.',
     databaseIntegration: 'Database Integration Available',
     databaseDescription: 'Enable persistent history and model comparison tracking by integrating with Supabase. This allows you to save research sessions, compare model performance metrics, and track improvements over time.',
     setupGuide: 'Setup Guide: Check the README.md for Supabase integration instructions',
+    historyCount: 'records',
+    searchHistory: 'Search history...',
+    noHistoryYet: 'No Research History',
+    noHistoryDesc: 'Your research history will be saved here automatically after completing your first research.',
+    noSearchResults: 'No matching records found',
+    selectSessionToView: 'Select a research record to view details',
+    backToList: 'Back to list',
+    deleteSession: 'Delete this record',
+    confirmDeleteMsg: 'Are you sure you want to delete this record? This action cannot be undone.',
+    confirmDeleteBtn: 'Delete',
+    cancelBtn: 'Cancel',
+    historyConnectionError: 'Database Connection Failed',
+    historyConnectionErrorDesc: 'Unable to connect to InstantDB. Please check if your App ID is configured correctly.',
 
     zhipuName: 'Zhipu GLM-4.7',
     zhipuDesc: 'Zhipu AI flagship model with interleaved thinking',
